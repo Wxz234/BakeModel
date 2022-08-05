@@ -1,8 +1,14 @@
-﻿// BakeModel.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
-//
-#define NOMINMAX
+﻿#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <assimp/material.h>
+#include <assimp/GltfMaterial.h>
+
 #include <Windows.h>
 #include <WinBase.h>
+#include <fileapi.h>
+#include <DirectXMath.h>
+
 #include <iostream>
 #include <vector>
 #include <cstdint>
@@ -10,12 +16,10 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
-#include <DirectXMath.h>
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-#include <assimp/pbrmaterial.h>
-#include <assimp/GltfMaterial.h>
+
+#include "winrt/windows.foundation.h"
+#include "winrt/windows.foundation.collections.h"
+#include "winrt/windows.data.json.h"
 
 struct Vertex {
 	float Position[3];
@@ -72,7 +76,7 @@ void processMesh(std::vector<Mesh> &mMesh,aiMesh* mesh, const aiScene* scene)
 	}
 	
 	aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-	if (aiColor3D color; material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_FACTOR, color) == aiReturn_SUCCESS) {
+	if (aiColor3D color; material->Get(AI_MATKEY_BASE_COLOR, color) == aiReturn_SUCCESS) {
 		my_mesh.BaseColor.BaseColorFactor = DirectX::XMFLOAT3(color.r, color.g, color.b);
 	}
 	else if (aiString baseColorTexture; material->GetTexture(AI_MATKEY_BASE_COLOR_TEXTURE, &baseColorTexture) == aiReturn_SUCCESS) {
@@ -87,13 +91,13 @@ void processMesh(std::vector<Mesh> &mMesh,aiMesh* mesh, const aiScene* scene)
 	}
 	else {
 		DirectX::XMFLOAT2 mrFloat2(0.f, 0.f);
-		if (float metallic; material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLIC_FACTOR, metallic) == aiReturn_SUCCESS) {
+		if (float metallic; material->Get(AI_MATKEY_METALLIC_FACTOR, metallic) == aiReturn_SUCCESS) {
 			mrFloat2.x = metallic;
 		}
 		else {
 			mrFloat2.x = 1.f;
 		}
-		if (float roughness; material->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_ROUGHNESS_FACTOR, roughness) == aiReturn_SUCCESS) {
+		if (float roughness; material->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == aiReturn_SUCCESS) {
 			mrFloat2.y = roughness;
 		}
 		else {
@@ -132,16 +136,56 @@ void processNode(std::vector<Mesh>& mMesh,aiNode* node, const aiScene* scene)
 	}
 }
 
-void Bake(std::filesystem::path &path,std::vector<Mesh>& mMesh) {
+void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 	auto file_name = path.stem();
-	bool ret = WritePrivateProfileSectionA("ABC", "test=1", "./config.ini");
-	auto err = GetLastError();
+
+	auto file_name_str = file_name.wstring();
+	CreateDirectoryW(file_name_str.c_str(), nullptr);
+	
+	auto json_file= file_name_str + L"\\" + file_name_str + L".json";
+	std::ofstream json_file_out(json_file, std::fstream::out);
+	auto json_bin = file_name_str + L"\\" + file_name_str + L".bin";
+	std::ofstream json_bin_out(json_bin, std::fstream::out);
+
+
+
+	winrt::Windows::Data::Json::JsonObject json;
+	json.Insert(L"MeshCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh.size()));
+
+	winrt::Windows::Data::Json::JsonArray mesh_attributes;
+
+	int offset = 0;
+	for (size_t i = 0;i < mMesh.size(); ++i) {
+		winrt::Windows::Data::Json::JsonObject meshData;
+		meshData.Insert(L"VertexCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh[i].Vertices.size()));
+		meshData.Insert(L"VertexOffset", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(offset));
+		// update offset
+		auto vertex_data_size = mMesh[i].Vertices.size() * sizeof(float) * 8;
+		offset += vertex_data_size;
+		json_bin_out.write((const char*)mMesh[i].Vertices.data(), vertex_data_size);
+		
+		meshData.Insert(L"IndexCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh[i].Indices.size()));
+		meshData.Insert(L"IndexOffset", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(offset));
+		auto index_data_size = mMesh[i].Indices.size() * sizeof(uint32_t);
+		offset += index_data_size;
+		json_bin_out.write((const char*)mMesh[i].Indices.data(), index_data_size);
+		// texture
+
+		mesh_attributes.InsertAt(i, meshData);
+	}
+	
+	json.Insert(L"MeshAttributes", mesh_attributes);
+	//json.Insert(L"MeshBinary", winrt::Windows::Data::Json::JsonValue::CreateStringValue(_json_bin.c_str()));
+	auto ppz = json.Stringify();
+
 
 }
 
 
 int main(int argc, char* argv[])
 {
+	winrt::init_apartment();
+
 	Assimp::Importer importer;
 	const aiScene* scene = nullptr;
 	if (argc >= 2) {
