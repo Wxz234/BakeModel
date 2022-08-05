@@ -170,6 +170,10 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 		offset += index_data_size;
 		json_bin_out.write((const char*)mMesh[i].Indices.data(), index_data_size);
 		// texture
+		if (mMesh[i].BaseColor.BaseColorFactor.has_value()) {
+			//
+
+		}
 
 		mesh_attributes.InsertAt(i, meshData);
 	}
