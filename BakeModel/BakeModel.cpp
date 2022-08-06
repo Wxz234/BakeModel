@@ -1,4 +1,6 @@
-﻿#include <assimp/Importer.hpp>
+﻿#define _CRT_SECURE_NO_WARNINGS
+
+#include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <assimp/material.h>
@@ -20,6 +22,11 @@
 #include "winrt/windows.foundation.h"
 #include "winrt/windows.foundation.collections.h"
 #include "winrt/windows.data.json.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 struct Vertex {
 	float Position[3];
@@ -136,18 +143,21 @@ void processNode(std::vector<Mesh>& mMesh,aiNode* node, const aiScene* scene)
 	}
 }
 
+std::string W2S(const std::wstring& str) {
+	std::filesystem::path my_path{ str };
+	return my_path.string();
+}
+
 void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 	auto file_name = path.stem();
 
-	auto file_name_str = file_name.wstring();
-	CreateDirectoryW(file_name_str.c_str(), nullptr);
+	auto file_name_str = file_name.string();
+	CreateDirectoryA(file_name_str.c_str(), nullptr);
 	
-	auto json_file= file_name_str + L"\\" + file_name_str + L".json";
+	auto json_file= file_name_str + "\\" + file_name_str + ".json";
 	std::ofstream json_file_out(json_file, std::fstream::out);
-	auto json_bin = file_name_str + L"\\" + file_name_str + L".bin";
+	auto json_bin = file_name_str + "\\" + file_name_str + ".bin";
 	std::ofstream json_bin_out(json_bin, std::fstream::out);
-
-
 
 	winrt::Windows::Data::Json::JsonObject json;
 	json.Insert(L"MeshCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh.size()));
@@ -159,7 +169,7 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 		winrt::Windows::Data::Json::JsonObject meshData;
 		meshData.Insert(L"VertexCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh[i].Vertices.size()));
 		meshData.Insert(L"VertexOffset", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(offset));
-		// update offset
+
 		auto vertex_data_size = mMesh[i].Vertices.size() * sizeof(float) * 8;
 		offset += vertex_data_size;
 		json_bin_out.write((const char*)mMesh[i].Vertices.data(), vertex_data_size);
@@ -169,9 +179,18 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 		auto index_data_size = mMesh[i].Indices.size() * sizeof(uint32_t);
 		offset += index_data_size;
 		json_bin_out.write((const char*)mMesh[i].Indices.data(), index_data_size);
-		// texture
+
 		if (mMesh[i].BaseColor.BaseColorFactor.has_value()) {
-			//
+
+			auto texture_path = file_name_str + "\\Mesh" + std::to_string(i) + "BaseColor.png";
+			uint8_t* picData = new uint8_t[16 * 16 * 3]{255};
+			picData[0] = 255;
+			stbi_write_png(texture_path.c_str(), 16, 16, 3, picData, 0);
+			auto json_tex_path = L"Mesh" + std::to_wstring(i) + L"BaseColor.png";
+			
+			meshData.Insert(L"BaseColorTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+		}
+		else {
 
 		}
 
