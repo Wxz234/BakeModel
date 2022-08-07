@@ -18,7 +18,9 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
+#include "winrt/base.h"
 #include "winrt/windows.foundation.h"
 #include "winrt/windows.foundation.collections.h"
 #include "winrt/windows.data.json.h"
@@ -38,6 +40,8 @@ struct Texture {
 	std::string FileName;
 	std::optional<DirectX::XMFLOAT3> BaseColorFactor;
 	std::optional<DirectX::XMFLOAT2> MetallicRoughnessFactor;
+	std::optional<DirectX::XMFLOAT3> NormalFactor;
+	std::optional<float> AOFactor;
 };
 
 struct Mesh {
@@ -83,11 +87,11 @@ void processMesh(std::vector<Mesh> &mMesh,aiMesh* mesh, const aiScene* scene)
 	}
 	
 	aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-	if (aiColor3D color; material->Get(AI_MATKEY_BASE_COLOR, color) == aiReturn_SUCCESS) {
-		my_mesh.BaseColor.BaseColorFactor = DirectX::XMFLOAT3(color.r, color.g, color.b);
-	}
-	else if (aiString baseColorTexture; material->GetTexture(AI_MATKEY_BASE_COLOR_TEXTURE, &baseColorTexture) == aiReturn_SUCCESS) {
+
+	if (aiString baseColorTexture; material->GetTexture(AI_MATKEY_BASE_COLOR_TEXTURE, &baseColorTexture) == aiReturn_SUCCESS) {
 		my_mesh.BaseColor.FileName = baseColorTexture.C_Str();
+	}else if (aiColor3D color; material->Get(AI_MATKEY_BASE_COLOR, color) == aiReturn_SUCCESS) {
+		my_mesh.BaseColor.BaseColorFactor = DirectX::XMFLOAT3(color.r, color.g, color.b);
 	}
 	else {
 		my_mesh.BaseColor.BaseColorFactor = DirectX::XMFLOAT3(1.f, 1.f, 1.f);
@@ -118,15 +122,16 @@ void processMesh(std::vector<Mesh> &mMesh,aiMesh* mesh, const aiScene* scene)
 		my_mesh.Normal.FileName = normalTexture.C_Str();
 	}
 	else {
-		my_mesh.Normal.FileName = "Normal.png";
+		my_mesh.Normal.NormalFactor = DirectX::XMFLOAT3(0.5f, 0.5f, 1.f);
 	}
 
 	if (aiString aoTexture; material->GetTexture(aiTextureType_AMBIENT_OCCLUSION, 0, &aoTexture) == aiReturn_SUCCESS) {
 		my_mesh.AO.FileName = aoTexture.C_Str();
 	}
 	else {
-		my_mesh.AO.FileName = "AO.png";
+		my_mesh.AO.AOFactor = 1.f;
 	}
+
 	mMesh.push_back(my_mesh);
 }
 
@@ -143,9 +148,9 @@ void processNode(std::vector<Mesh>& mMesh,aiNode* node, const aiScene* scene)
 	}
 }
 
-std::string W2S(const std::wstring& str) {
-	std::filesystem::path my_path{ str };
-	return my_path.string();
+inline uint8_t float_to_int_color(const double color) {
+	constexpr double MAXCOLOR = 256.0 - std::numeric_limits<double>::epsilon() * 128;
+	return static_cast<uint8_t>(color * MAXCOLOR);
 }
 
 void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
@@ -161,7 +166,6 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 
 	winrt::Windows::Data::Json::JsonObject json;
 	json.Insert(L"MeshCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh.size()));
-
 	winrt::Windows::Data::Json::JsonArray mesh_attributes;
 
 	int offset = 0;
@@ -183,25 +187,123 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 		if (mMesh[i].BaseColor.BaseColorFactor.has_value()) {
 
 			auto texture_path = file_name_str + "\\Mesh" + std::to_string(i) + "BaseColor.png";
-			uint8_t* picData = new uint8_t[16 * 16 * 3]{255};
-			picData[0] = 255;
+			uint8_t* picData = new uint8_t[16 * 16 * 3]{};
+			for (int x = 0; x < 16; ++x) {
+				for (int y = 0; y < 16; ++y) {
+					auto factor_value = mMesh[i].BaseColor.BaseColorFactor.value();
+					picData[x * 48 + y * 3 + 0] = float_to_int_color(factor_value.x);
+					picData[x * 48 + y * 3 + 1] = float_to_int_color(factor_value.y);
+					picData[x * 48 + y * 3 + 2] = float_to_int_color(factor_value.z);
+				}
+			}
+			
 			stbi_write_png(texture_path.c_str(), 16, 16, 3, picData, 0);
 			auto json_tex_path = L"Mesh" + std::to_wstring(i) + L"BaseColor.png";
 			
 			meshData.Insert(L"BaseColorTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+			delete []picData;
 		}
 		else {
+			auto texture_path = path.parent_path();
+			texture_path /= mMesh[i].BaseColor.FileName;
+			std::filesystem::copy(texture_path, file_name, std::filesystem::copy_options::skip_existing);
+			
+			auto json_filename = texture_path.filename();
+			auto json_tex_path = json_filename.wstring();
+			meshData.Insert(L"BaseColorTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+		}
 
+		if (mMesh[i].MetallicRoughness.MetallicRoughnessFactor.has_value()) {
+			auto texture_path = file_name_str + "\\Mesh" + std::to_string(i) + "MetallicRoughness.png";
+			uint8_t* picData = new uint8_t[16 * 16 * 3]{};
+
+			for (int x = 0; x < 16; ++x) {
+				for (int y = 0; y < 16; ++y) {
+					auto factor_value = mMesh[i].MetallicRoughness.MetallicRoughnessFactor.value();
+					picData[x * 48 + y * 3 + 0] = float_to_int_color(factor_value.x);
+					picData[x * 48 + y * 3 + 1] = float_to_int_color(factor_value.y);
+					picData[x * 48 + y * 3 + 2] = 0;
+				}
+			}
+			stbi_write_png(texture_path.c_str(), 16, 16, 3, picData, 0);
+			auto json_tex_path = L"Mesh" + std::to_wstring(i) + L"MetallicRoughness.png";
+
+			meshData.Insert(L"MetallicRoughnessTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+			delete[]picData;
+		}
+		else {
+			auto texture_path = path.parent_path();
+			texture_path /= mMesh[i].MetallicRoughness.FileName;
+			std::filesystem::copy(texture_path, file_name, std::filesystem::copy_options::skip_existing);
+
+			auto json_filename = texture_path.filename();
+			auto json_tex_path = json_filename.wstring();
+			meshData.Insert(L"MetallicRoughnessTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+		}
+
+		if (mMesh[i].Normal.NormalFactor.has_value()) {
+			auto texture_path = file_name_str + "\\Mesh" + std::to_string(i) + "Normal.png";
+			uint8_t* picData = new uint8_t[16 * 16 * 3]{};
+
+			for (int x = 0; x < 16; ++x) {
+				for (int y = 0; y < 16; ++y) {
+					auto factor_value = mMesh[i].Normal.NormalFactor.value();
+					picData[x * 48 + y * 3 + 0] = float_to_int_color(factor_value.x);
+					picData[x * 48 + y * 3 + 1] = float_to_int_color(factor_value.y);
+					picData[x * 48 + y * 3 + 2] = float_to_int_color(factor_value.z);
+				}
+			}
+			stbi_write_png(texture_path.c_str(), 16, 16, 3, picData, 0);
+			auto json_tex_path = L"Mesh" + std::to_wstring(i) + L"Normal.png";
+
+			meshData.Insert(L"NormalTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+			delete[]picData;
+		}
+		else {
+			auto texture_path = path.parent_path();
+			texture_path /= mMesh[i].Normal.FileName;
+			std::filesystem::copy(texture_path, file_name, std::filesystem::copy_options::skip_existing);
+			auto json_filename = texture_path.filename();
+			auto json_tex_path = json_filename.wstring();
+			meshData.Insert(L"NormalTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+		}
+
+		if (mMesh[i].AO.AOFactor.has_value()) {
+			auto texture_path = file_name_str + "\\Mesh" + std::to_string(i) + "AO.png";
+			uint8_t* picData = new uint8_t[16 * 16 * 3]{};
+
+			for (int x = 0; x < 16; ++x) {
+				for (int y = 0; y < 16; ++y) {
+					auto factor_value = mMesh[i].AO.AOFactor.value();
+					picData[x * 48 + y * 3 + 0] = float_to_int_color(factor_value);
+					picData[x * 48 + y * 3 + 1] = 255;
+					picData[x * 48 + y * 3 + 2] = 255;
+				}
+			}
+			stbi_write_png(texture_path.c_str(), 16, 16, 3, picData, 0);
+			auto json_tex_path = L"Mesh" + std::to_wstring(i) + L"AO.png";
+
+			meshData.Insert(L"AOTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
+			delete[]picData;
+		}
+		else {
+			auto texture_path = path.parent_path();
+			texture_path /= mMesh[i].AO.FileName;
+			std::filesystem::copy(texture_path, file_name, std::filesystem::copy_options::skip_existing);
+
+			auto json_filename = texture_path.filename();
+			auto json_tex_path = json_filename.wstring();
+			meshData.Insert(L"AOTexture", winrt::Windows::Data::Json::JsonValue::CreateStringValue(json_tex_path));
 		}
 
 		mesh_attributes.InsertAt(i, meshData);
 	}
 	
 	json.Insert(L"MeshAttributes", mesh_attributes);
-	//json.Insert(L"MeshBinary", winrt::Windows::Data::Json::JsonValue::CreateStringValue(_json_bin.c_str()));
-	auto ppz = json.Stringify();
 
-
+	auto jsonStr = json.Stringify();
+	auto json_s_Str = winrt::to_string(jsonStr);
+	json_file_out.write(json_s_Str.data(), json_s_Str.size());
 }
 
 
@@ -216,10 +318,11 @@ int main(int argc, char* argv[])
 	}
 	else {
 		std::cout << "Need file name." << std::endl;
+		return 0;
 	}
 	std::vector<Mesh> mMesh;
-	scene = importer.ReadFile("C:\\Users\\42937\\Desktop\\glTF-Sample-Models-master\\Box\\glTF\\Box.gltf", aiProcess_Triangulate | aiProcess_GenNormals);
-	std::filesystem::path my_path{ "C:\\Users\\42937\\Desktop\\glTF-Sample-Models-master\\Box\\glTF\\Box.gltf" };
+	scene = importer.ReadFile(argv[1], aiProcess_Triangulate | aiProcess_GenNormals);
+	std::filesystem::path my_path{ argv[1] };
 	if (scene) {
 		processNode(mMesh, scene->mRootNode, scene);
 	}
