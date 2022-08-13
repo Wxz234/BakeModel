@@ -165,21 +165,21 @@ void Bake(std::filesystem::path& path, std::vector<Mesh>& mMesh) {
 	std::ofstream json_bin_out(json_bin, std::fstream::out);
 
 	winrt::Windows::Data::Json::JsonObject json;
-	json.Insert(L"MeshCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh.size()));
+	json.Insert(L"MeshCount", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(mMesh.size())));
 	winrt::Windows::Data::Json::JsonArray mesh_attributes;
 
 	int offset = 0;
 	for (size_t i = 0;i < mMesh.size(); ++i) {
 		winrt::Windows::Data::Json::JsonObject meshData;
-		meshData.Insert(L"VertexCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh[i].Vertices.size()));
-		meshData.Insert(L"VertexOffset", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(offset));
+		meshData.Insert(L"VertexCount", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(mMesh[i].Vertices.size())));
+		meshData.Insert(L"VertexOffset", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(offset)));
 
 		auto vertex_data_size = mMesh[i].Vertices.size() * sizeof(float) * 8;
 		offset += vertex_data_size;
 		json_bin_out.write((const char*)mMesh[i].Vertices.data(), vertex_data_size);
 		
-		meshData.Insert(L"IndexCount", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(mMesh[i].Indices.size()));
-		meshData.Insert(L"IndexOffset", winrt::Windows::Data::Json::JsonValue::CreateNumberValue(offset));
+		meshData.Insert(L"IndexCount", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(mMesh[i].Indices.size())));
+		meshData.Insert(L"IndexOffset", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(offset)));
 		auto index_data_size = mMesh[i].Indices.size() * sizeof(uint32_t);
 		offset += index_data_size;
 		json_bin_out.write((const char*)mMesh[i].Indices.data(), index_data_size);
